@@ -1,0 +1,35 @@
+library(tidyverse) 
+library(tidymodels) 
+library(corrplot) 
+library(caret)
+library(janitor)
+library(skimr)
+library(patchwork)
+library(lubridate)
+library(ranger)
+library(rlang)
+library(ggplot2)
+library(corrr)
+library(klaR)
+library(MASS)
+library(discrim)
+library(installr)
+library(kernlab)
+library(kknn)
+tidymodels_prefer()
+setwd('C:/Users/DELL/Desktop/131/final project/1002Rmodel')
+glass <- read_csv("glass.csv")
+glass0<-glass
+#View(glass)
+
+head(glass)
+#checking missing values
+apply(is.na(glass), 2, sum) 
+
+glass <- glass %>% 
+  clean_names()
+colnames(glass)
+
+glass$type<-as.factor(glass$type)
+unique(glass$type)
+write.csv(glass,file="C:/Users/DELL/Desktop/131/final project/1002Rmodel/glass_processing.csv")

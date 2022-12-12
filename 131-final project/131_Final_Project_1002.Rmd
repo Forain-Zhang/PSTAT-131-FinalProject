@@ -1,0 +1,394 @@
+---
+title: "PSTAT131 Final Project"
+author: "shiyu zhang"
+date: "2022/12/05"
+output:
+  html_document:
+    theme: paper
+    highlight: tango
+    code_folding: hide
+---
+## Introduction  
+
+We are interested in how the composition of glass affects the main use of glass, thus, the use category of glass is the predictor variable of our interest (dependent variable), We named it glass type, it is a discrete variable and have six different values, specifically: buildingwindowsfloatprocessed, buildingwindowsnonfloatprocessed, vehiclewindowsfloatprocessed, containers, tableware, headlamps.
+We use the common method of classification prediction to solve this problem, the goal of the model is to make predictions. Because the use of the glass is closely related to the composition of the glass, all nine independent variables should be important.  
+
+## Loading Data and Packages  
+
+This is a glass identification data set from UCI and a total of 214 samples are available. It contains 10 variables. The response is glass type(discrete 6 values) and there are nine predictors (all are continuous variables ).
+The data for this project comes from the kaggle competition platform see https://www.kaggle.com/datasets/uciml/glass?select=glass.csv.  
+Attribute Information: 
+RI: refractive index  
+Na: Sodium (unit measurement: weight percent in corresponding oxide, as are attributes 4-10)  
+Mg: Magnesium  
+Al: Aluminum  
+Si: Silicon  
+K: Potassium  
+Ca: Calcium  
+Ba: Barium  
+Fe: Iron  
+Type of glass: (class attribute)  
+-- 1 buildingwindowsfloatprocessed   
+-- 2 buildingwindowsnonfloatprocessed   
+-- 3 vehiclewindowsfloatprocessed  
+-- 4 vehiclewindowsnonfloatprocessed (none in this database)  
+-- 5 containers  
+-- 6 tableware  
+-- 7 headlamps  
+
+```{r Loading Data and Packages, message=FALSE, warning=FALSE, results="hide"}
+library(tidyverse) 
+library(tidymodels) 
+library(corrplot) 
+library(caret)
+library(janitor)
+library(skimr)
+library(patchwork)
+library(lubridate)
+library(ranger)
+library(rlang)
+library(ggplot2)
+library(corrr)
+library(klaR)
+library(MASS)
+library(discrim)
+library(installr)
+library(kernlab)
+library(kknn)
+tidymodels_prefer()
+setwd('C:/Users/DELL/Desktop/131/final project/1002Rmodel')
+glass <- read_csv("glass.csv")
+glass0<-glass
+#View(glass)
+```
+
+## Data Cleaning
+
+  1. checking missing values  
+  
+We confirmed that none of the variables have missing values.
+
+```{r check missing values, message=FALSE, warning=FALSE}
+head(glass)
+#checking missing values
+apply(is.na(glass), 2, sum) 
+```  
+
+  2. Clean names  
+
+Convert all uppercase letters of a variable to lowercase.  
+
+```{r, message=FALSE, warning=FALSE}
+glass <- glass %>% 
+  clean_names()
+colnames(glass)
+```  
+
+  3. Convert to factor  
+
+The data type of the dependent variable glass type in the original data is numerical, so we need to convert it into a factor variable.  
+
+```{r, message=FALSE, warning=FALSE}
+glass$type<-as.factor(glass$type)
+unique(glass$type)
+write.csv(glass,file="C:/Users/DELL/Desktop/131/final project/1002Rmodel/glass_processing.csv")
+```  
+
+## Exploratory Data Analysis  
+
+###  Distribution of glass class
+
+According to the quantity of each category of glass, we find that the main types of glass are building windows float processed, building windows non flat processed, that is, type 1 and 2.  
+
+```{r, message=FALSE, warning=FALSE, results="hide"}
+theme <- theme(plot.title = element_text(hjust = 0.3, face = "bold"))
+
+glass%>%
+  ggplot(aes(x = type, 
+             y = stat(count), fill = type,
+             label = scales::comma(stat(count)))) +
+  geom_bar(position = "dodge") + 
+  geom_text(stat = 'count',
+            position = position_dodge(.9), 
+            vjust = -0.5, 
+            size = 3) + 
+  scale_y_continuous(labels = scales::comma)+
+  labs(x = 'glass type', y = 'Count') +
+  ggtitle("Distribution of glass type") +
+  theme
+```  
+
+### Distribution of glass each type  
+
+From the density plot of each glass type, we know that the distribution of type 1 and type 2 glass is right biased. 
+
+```{r,message=FALSE, warning=FALSE, results="hide"}
+ggplot(glass, aes(x = type, colour = type)) + 
+  geom_density(aes(group = type, fill = type), alpha = 0.3) +
+  labs(title = "Distribution of glass each type")
+```  
+
+### correlation between  
+
+The type of glass has the largest correlation with Mg, followed by the content of Al, with correlation coefficients of -0.74 and 0.6 respectively.  
+
+```{r plot correlation, message=FALSE, warning=FALSE, results="hide"}
+corr <- cor(glass0)
+corrplot(corr,tl.cex = 0.8, number.cex = 0.8, method = "number",title ='correlation matrix')
+```
+
+### Boxplot of Mg by glass type
+
+By observing the box graph of magnesium content of each type of glass, we can find that the magnesium content of different types of glass is really large, and the magnesium content of type 1, 2 and 3 is obviously higher than that of other glass types. Type 7 has the lowest magnesium content.
+
+```{r, message=FALSE, warning=FALSE}
+glass %>%
+  ggplot(aes(x = type, y = mg,fill = type)) + 
+  geom_boxplot() + 
+  labs(x = 'glass type', y = 'Mg') +
+  ggtitle("Boxplot of Mg by glass type") +
+  theme
+```
+  
+### Boxplot of Al by glass type
+
+We found that the aluminum content of different types of glass is indeed different, the aluminum content of type 7 is the highest, and the aluminum content of type 1 is relatively stable with little difference.
+
+```{r, message=FALSE, warning=FALSE, results="hide"}
+glass %>%
+  ggplot(aes(x = type, y = al,fill = type)) + 
+  geom_boxplot() + 
+  labs(x = 'glass type', y = 'Al') +
+  ggtitle("Boxplot of Al by glass type") +
+  theme
+```  
+
+## Model preparation  
+
+### Data Split
+
+The data set contains a total of 214 samples,of which 80% of the data is used as training data about 170 and 20% of the data is used as test data about 44. We conduct stratified sampling according to the type of glass.  
+
+```{r, message=FALSE, warning=FALSE}
+set.seed(111)
+split_data <-glass %>% 
+  initial_split(glass,prop = 0.8, strata = "type")
+trainingGlass <- training(split_data)
+testingGlass <- testing(split_data)
+dim(trainingGlass) # 170  10
+dim(testingGlass)  # 44 10
+dim(glass)
+```  
+
+###  Building the Recipe and Tweaking The Data
+
+Because the sample size is not large enough and the glass category is relatively large, so We use two fold cross validation to train the model is to ensure that each category of glass has data. Because the independent variables are continuous variables, so we normalize all the predictors.  
+
+```{r, message=FALSE, warning=FALSE}
+Glass_folds <- vfold_cv(trainingGlass, v = 2,repeats = 3)  
+recipe<-trainingGlass %>%
+  recipe(type ~ri+na+mg+al+si+k+ca+ba+fe) %>%
+  step_normalize(all_predictors()) #Center and scale all predictors
+recipe
+```  
+
+##  Model buildiing  
+
+Nearly every model built had the same process, which I will detail right now.  
+*1. Set up the model by specifying what type of model, setting its engine, and setting its mode (which was always classification).  
+*2.Set up the workflow, add the new model, and add the established recipe.  
+*3.Set up the tuning grid with the parameters that we want tuned, and how many different levels of tuning.  
+*4.Tune the model with certain parameters of choice.   
+*5.Select the most accurate model from all of the tuning, finalize the workflow with those tuning parameters.  
+*6.Fit that model with our workflow to the training data set.  
+I decided to run cross 2 fold cross validation on the following four models.  
+1.Logistic regression model 
+2.SVM model  
+3.Nearest Neighbors model  
+4.Random forest model  
+
+###  Logistic Regression Model  
+
+I tuned penalty, set mode to "classification", and used the LiblineaR engine. 
+
+```{r, message=FALSE, warning=FALSE, results="hide"  }
+log_model <- logistic_reg() %>% 
+  set_engine("LiblineaR")%>% 
+  set_mode('classification')%>%
+  set_args(penalty = tune())
+
+log_workflow <- workflow() %>% 
+  add_model(log_model) %>% 
+  add_recipe(recipe)
+
+log_grid <- tibble(penalty = 10^seq(-3, -1, length.out = 20))
+```  
+
+I executed my model by tuning penalty and save model result. This process took 3 minutes, it is quickly. 
+
+```{r, message=FALSE, warning=FALSE, results="hide" }
+log_res <- log_workflow %>% 
+  tune_grid(resamples = Glass_folds,
+            grid = log_grid,
+            control = control_grid(save_pred = TRUE),
+            metrics = metric_set(roc_auc))
+
+save(log_res, log_workflow, file = "C:/Users/DELL/Desktop/131/final project/1002Rmodel/log_res.rda")
+```
+
+The auc value increases first and then decreases with the increase of peneality. When penalty is 0.02976351,the average auc reaches the maximum value of 87.05%.  
+
+```{r, message=FALSE, warning=FALSE  }
+load("C:/Users/DELL/Desktop/131/final project/1002Rmodel/log_res.rda")
+autoplot(log_res, metric = "roc_auc")  ##0.001 best
+show_best(log_res, metric = "roc_auc") %>% dplyr::select(-.estimator, -.config)
+#penalty=0.02976351	mean=0.8705329	
+```
+
+###  SVM Model 
+
+I tuned cost, set mode to "classification", and used the kernlab engine.  
+
+```{r set svm model, message=FALSE, warning=FALSE, results="hide"  }
+svm_model <- svm_rbf() %>%
+  set_engine("kernlab")%>%
+  set_mode('classification')%>% 
+  set_args(cost  = tune())
+
+svm_workflow <- workflow() %>% 
+  add_model(svm_model) %>% 
+  add_recipe(recipe)
+
+svm_grid <- tibble(cost = 10^seq(-3, 0, length.out = 20))
+```
+
+I executed my model by tuning cost and save model result. This process took 3 minutes, it is quickly.  
+
+```{r execute svm, message=FALSE, warning=FALSE, results="hide" ,eval=FALSE}
+set.seed(111)
+svm_res <- svm_workflow %>%
+  tune_grid(resamples =Glass_folds,
+            grid = svm_grid)
+save(svm_res, svm_workflow, file = "C:/Users/DELL/Desktop/131/final project/1002Rmodel/svm_res.rda")
+```
+
+The auc value increases with the increase of peneality. When cost is 1,the average auc reaches the maximum value of 79.76%.  
+
+```{r, message=FALSE, warning=FALSE  }
+set.seed(111)
+load("C:/Users/DELL/Desktop/131/final project/1002Rmodel/svm_res.rda")
+autoplot(svm_res, metric = "roc_auc")  
+show_best(svm_res, metric = "roc_auc") %>% select(-.estimator, -.config) #cost=1 mean=0.7976189	 
+```  
+
+###  Nearest Neighbors Model 
+
+I tuned neighbors, set mode to "classification", and used the kknn engine. 
+
+```{r set knn model, message=FALSE, warning=FALSE, results="hide"  }
+knn_model <- nearest_neighbor() %>%
+  set_engine("kknn")%>%
+  set_mode("classification") %>%
+  set_args(neighbors = tune())
+  
+
+knn_workflow <- workflow() %>% 
+  add_model(knn_model) %>% 
+  add_recipe(recipe)
+
+# define grid
+knn_grid <- tibble(neighbors = seq(1, 50))
+```
+
+Then, I executed my model by tuning and fitting. This process took 2 minutes, it is quickly.
+```{r execute knn, message=FALSE, warning=FALSE, results="hide" ,eval=FALSE}
+set.seed(111)
+knn_res <- knn_workflow %>% 
+  tune_grid(resamples = Glass_folds,
+            grid = knn_grid
+       )
+save(knn_res, knn_workflow, file = "C:/Users/DELL/Desktop/131/final project/1002Rmodel/knn_res.rda")
+```
+
+Taking a quick peak at the autoplot() function and show_best() based on roc_auc metric.We found that as K increases,roc_auc will also increase, but when the value of K reaches 25,roc_ auc decreases with the increase of k, When k equals 12, the roc_auc value of the model is the highest, with an average auc of 87.11%.  
+
+```{r show knn, message=FALSE, warning=FALSE  }
+set.seed(111)
+load("C:/Users/DELL/Desktop/131/final project/1002Rmodel/knn_res.rda")
+autoplot(knn_res, metric = "roc_auc") 
+show_best(knn_res, metric = "roc_auc") %>% select(-.estimator, -.config)  
+```  
+
+###  Random Forest Model 
+
+I tuned min_n, set mode to "classification", and used the ranger engine. 
+
+```{r set rf model, message=FALSE, warning=FALSE, results="hide"  }
+rf_model <- rand_forest() %>%
+  set_mode("classification") %>%
+  set_engine("ranger",importance = "impurity")%>%
+  set_args( min_n = tune() )
+
+rf_workflow <- workflow() %>% 
+  add_model(rf_model) %>% 
+  add_recipe(recipe)
+
+# define grid  data is small,so only tune min_n
+rf_grid <- tibble(min_n = seq(1, 40))
+```
+
+Then, I executed my model by tuning and fitting. This process took 5 minutes, it is quickly.
+```{r execute rf, message=FALSE, warning=FALSE, results="hide" ,eval=FALSE}
+set.seed(111)
+rf_res <- rf_workflow %>% 
+  tune_grid(resamples = Glass_folds,
+            grid = rf_grid
+           )
+save(rf_res, rf_workflow, file = "C:/Users/DELL/Desktop/131/final project/1002Rmodel/rf_res.rda")
+```
+
+Taking a quick peak at the autoplot() function and show_best() based on roc_auc metric. We found that When node is 4, roc_auc has a maximum value, its mean roc_auc value is close to 93.46%, and the roc_auc shows a decreasing trend with the increase of node.  
+
+```{r show rf, message=FALSE, warning=FALSE  }
+set.seed(111)
+load("C:/Users/DELL/Desktop/131/final project/1002Rmodel/rf_res.rda")
+autoplot(rf_res, metric = "roc_auc")  
+show_best(rf_res, metric = "roc_auc") %>% select(-.estimator, -.config) #min_n=1 mean=0.9535182
+```  
+
+##  Final Model Building  
+
+Let’s continue with the Random Forest Model being the model that performed best,it's mean roc_auc value is highest,closing to 93.5%.  
+We’ll create a workflow that has tuned in the name, so we can identify it. We’ll finalize the workflow by taking the optimal parameters from the random forest using the select_best() function. Then fit optimal random forest model to training sets.  
+
+```{r rf final model, message=FALSE, warning=FALSE}
+set.seed(111)
+rf_workflow_tuned <- rf_workflow %>% 
+  finalize_workflow(select_best(rf_res, metric = "roc_auc"))
+rf_final <- fit(rf_workflow_tuned, trainingGlass)
+```  
+
+## Analysis of The Test Set  
+
+Lets fit the model to the testing data set and plot confusion matrix and calculate accuracy and auc value.  
+The accuracy of the final model in the test set is 72.73%, auc value is 93.79%. Through the confusion matrix, we found that the prediction accuracy of the model for glass types 3 and 5 is not high enough, that is, vehicle windows float processed and containers are two types of glass that can be predicted with our model, and the accuracy still has room for improvement.  
+
+```{r traing rf model, message=FALSE, warning=FALSE }
+set.seed(111)
+#confusion
+augment(rf_final, new_data = testingGlass) %>%
+  conf_mat(truth = type, estimate = .pred_class) %>%
+  autoplot(type = "heatmap")
+#calculate accuracy
+rf_acc <- augment(rf_final, new_data = testingGlass) %>%
+  accuracy(truth = type, estimate = .pred_class)
+rf_acc
+#calculate auc 
+rf_final_auc <- augment(rf_final, new_data = testingGlass) %>%
+  roc_auc(type, estimate = .pred_1:.pred_7) %>%
+  select(.estimate)  # computing the AUC for the ROC curve
+rf_final_auc
+```  
+
+## Conclusion  
+In order to predict different kinds of glass, this paper uses logistic regression, SVM, KNN and random forest model to fit the data and optimize the model parameters. The average auc values of the four optimized models are 87.05%, 79.76%, 87.11% and 93.45% respectively. Therefore, we choose the optimized random forest model as our final model and fit the test set. The results show that the performance of the model on the test set is good, with an accuracy rate of 72.73% and an auc value of 93.79%. It is worth mentioning that the model may still have room for optimization.  
